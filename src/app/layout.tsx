@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, Fraunces } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const sans = IBM_Plex_Sans({
@@ -25,7 +26,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${sans.variable} ${display.variable} antialiased`}>
-        {children}
+        <ClerkProvider>
+          {children}
+        </ClerkProvider>
       </body>
     </html>
   );
