@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #12243a;
+  --ink-soft: #3d5168;
+  --paper: #f3efe6;
+  --panel: #fffdf8;
+  --line: #d9d0c0;
+  --teal: #0f6e67;
+  --teal-deep: #0b524d;
+  --amber: #b45309;
+  --rose: #9f1239;
+  --ok: #047857;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-sans), "IBM Plex Sans", system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
