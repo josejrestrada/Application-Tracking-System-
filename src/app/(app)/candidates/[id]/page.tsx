@@ -34,6 +34,10 @@ const REJECTION_REASONS = [
   'Other',
 ] as const;
 
+const ROUND_NAMES = ['L1 Technical', 'Client Interview', 'HR Round', 'System Design'] as const;
+
+const EMAIL_TEMPLATES = ['Interview Invite', 'Rejection Note', 'Offer Letter Notice'] as const;
+
 type Application = {
   id?: string;
   job_id: string;
@@ -48,6 +52,18 @@ type Application = {
 type StagePrompt = {
   application: Application;
   stage: 'Offered' | 'Rejected';
+};
+
+type Interview = {
+  id?: string;
+  candidate_id?: string;
+  job_id?: string | null;
+  application_id?: string | null;
+  round_name?: string | null;
+  interviewer_names?: string | null;
+  scheduled_at?: string | null;
+  meeting_link?: string | null;
+  notes?: string | null;
 };
 
 type Activity = {
@@ -93,6 +109,10 @@ function formatWhen(value?: string | null) {
   return date.toLocaleString();
 }
 
+function mailtoHref(to: string, subject: string, body: string) {
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 export default function CandidateOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useUser();
@@ -106,6 +126,21 @@ export default function CandidateOverviewPage() {
   const [offeredCtc, setOfferedCtc] = useState('');
   const [expectedJoiningDate, setExpectedJoiningDate] = useState('');
   const [rejectionReason, setRejectionReason] = useState<string>(REJECTION_REASONS[0]);
+  const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [interviewFor, setInterviewFor] = useState<Application | null>(null);
+  const [roundName, setRoundName] = useState<string>(ROUND_NAMES[0]);
+  const [interviewerNames, setInterviewerNames] = useState('');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [meetingLink, setMeetingLink] = useState('');
+  const [interviewNotes, setInterviewNotes] = useState('');
+  const [savingInterview, setSavingInterview] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTemplate, setEmailTemplate] = useState<(typeof EMAIL_TEMPLATES)[number]>(
+    EMAIL_TEMPLATES[0]
+  );
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const recruiterName =
     user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter';
@@ -113,23 +148,35 @@ export default function CandidateOverviewPage() {
   async function load() {
     if (!id) return;
     setLoading(true);
-    const [{ data: candidateRow, error: candidateError }, { data: activityRows, error: activityError }] =
-      await Promise.all([
-        supabase.from('candidates').select(CANDIDATE_JOB_SELECT).eq('id', id).maybeSingle(),
-        supabase
-          .from('candidate_activities')
-          .select('*')
-          .eq('candidate_id', id)
-          .order('created_at', { ascending: false }),
-      ]);
+    const [
+      { data: candidateRow, error: candidateError },
+      { data: activityRows, error: activityError },
+      { data: interviewRows, error: interviewError },
+    ] = await Promise.all([
+      supabase.from('candidates').select(CANDIDATE_JOB_SELECT).eq('id', id).maybeSingle(),
+      supabase
+        .from('candidate_activities')
+        .select('*')
+        .eq('candidate_id', id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('interviews')
+        .select('*')
+        .eq('candidate_id', id)
+        .order('scheduled_at', { ascending: true }),
+    ]);
     if (candidateError) {
       alert('Unable to load candidate: ' + candidateError.message);
     }
     if (activityError) {
       console.error(activityError);
     }
+    if (interviewError) {
+      console.error(interviewError);
+    }
     setCandidate((candidateRow as Candidate) || null);
     setActivities((activityRows as Activity[]) || []);
+    setInterviews((interviewRows as Interview[]) || []);
     setLoading(false);
   }
 
@@ -236,6 +283,122 @@ export default function CandidateOverviewPage() {
     });
   }
 
+  function jobTitleFor(application?: Application | null) {
+    if (!application) return applications[0] ? jobFromApplication(applications[0])?.title || 'open role' : 'open role';
+    return jobFromApplication(application)?.title || 'open role';
+  }
+
+  function nextInterview() {
+    const now = Date.now();
+    return (
+      interviews.find((row) => row.scheduled_at && new Date(row.scheduled_at).getTime() >= now) ||
+      interviews[interviews.length - 1] ||
+      null
+    );
+  }
+
+  function buildEmail(template: (typeof EMAIL_TEMPLATES)[number]) {
+    const name = candidate?.full_name || 'there';
+    const jobTitle = jobTitleFor(applications[0] || null);
+    const interview = nextInterview();
+    const when = interview?.scheduled_at ? formatWhen(interview.scheduled_at) : '[date/time]';
+    const link = interview?.meeting_link || '[meeting link]';
+    if (template === 'Interview Invite') {
+      return {
+        subject: `Interview Invitation – ${jobTitle}`,
+        body: `Hi ${name},\n\nWe would like to invite you for an interview for the ${jobTitle} role at Meridian Technologies.\n\nRound: ${interview?.round_name || '[round]'}\nDate/time: ${when}\nMeeting link: ${link}\n\nPlease confirm your availability.\n\nBest regards,\nMeridian Technologies Recruitment`,
+      };
+    }
+    if (template === 'Rejection Note') {
+      return {
+        subject: `Update on your application – ${jobTitle}`,
+        body: `Hi ${name},\n\nThank you for your time and interest in the ${jobTitle} role at Meridian Technologies. After careful consideration, we will not be moving forward with your application at this time.\n\nWe appreciate the effort you put into the process and wish you the very best in your search.\n\nBest regards,\nMeridian Technologies Recruitment`,
+      };
+    }
+    return {
+      subject: `Offer – ${jobTitle}`,
+      body: `Hi ${name},\n\nCongratulations! We are pleased to extend an offer for the ${jobTitle} role at Meridian Technologies.\n\nOur team will follow up shortly with the formal offer letter and next steps.\n\nBest regards,\nMeridian Technologies Recruitment`,
+    };
+  }
+
+  function openEmailModal() {
+    const draft = buildEmail(EMAIL_TEMPLATES[0]);
+    setEmailTemplate(EMAIL_TEMPLATES[0]);
+    setEmailSubject(draft.subject);
+    setEmailBody(draft.body);
+    setEmailOpen(true);
+  }
+
+  function applyEmailTemplate(template: (typeof EMAIL_TEMPLATES)[number]) {
+    const draft = buildEmail(template);
+    setEmailTemplate(template);
+    setEmailSubject(draft.subject);
+    setEmailBody(draft.body);
+  }
+
+  function openInterviewModal(application: Application) {
+    setInterviewFor(application);
+    setRoundName(ROUND_NAMES[0]);
+    setInterviewerNames('');
+    setScheduledAt('');
+    setMeetingLink('');
+    setInterviewNotes('');
+  }
+
+  async function saveInterview() {
+    if (!interviewFor || !id) return;
+    if (!scheduledAt) {
+      alert('Choose a date and time for the interview.');
+      return;
+    }
+    setSavingInterview(true);
+    try {
+      const scheduledIso = new Date(scheduledAt).toISOString();
+      const { error } = await supabase.from('interviews').insert([
+        {
+          candidate_id: id,
+          job_id: interviewFor.job_id,
+          round_name: roundName,
+          interviewer_names: interviewerNames.trim() || null,
+          scheduled_at: scheduledIso,
+          meeting_link: meetingLink.trim() || null,
+          notes: interviewNotes.trim() || null,
+        },
+      ]);
+      if (error) throw error;
+      const jobTitle = jobTitleFor(interviewFor);
+      await logActivity(
+        'Interview Scheduled',
+        `${roundName} for ${jobTitle} on ${formatWhen(scheduledIso)}${interviewerNames.trim() ? ` with ${interviewerNames.trim()}` : ''}${meetingLink.trim() ? ` · ${meetingLink.trim()}` : ''}`
+      );
+      setInterviewFor(null);
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to schedule interview.');
+    } finally {
+      setSavingInterview(false);
+    }
+  }
+
+  async function sendViaMailClient() {
+    const to = candidate?.email?.trim();
+    if (!to) {
+      alert('This candidate does not have an email address.');
+      return;
+    }
+    setSendingEmail(true);
+    try {
+      await logActivity('Email Sent', `${emailTemplate}: ${emailSubject}`);
+      window.location.href = mailtoHref(to, emailSubject, emailBody);
+      setEmailOpen(false);
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to log email.');
+    } finally {
+      setSendingEmail(false);
+    }
+  }
+
   async function addNote() {
     const text = note.trim();
     if (!text) return;
@@ -257,6 +420,18 @@ export default function CandidateOverviewPage() {
   );
   const applications = candidate?.applications || [];
   const skills = Array.isArray(candidate?.skills) ? candidate.skills : [];
+  const now = Date.now();
+  const upcomingInterviews = interviews.filter(
+    (row) => row.scheduled_at && new Date(row.scheduled_at).getTime() >= now
+  );
+  const pastInterviews = interviews.filter(
+    (row) => !row.scheduled_at || new Date(row.scheduled_at).getTime() < now
+  );
+
+  function interviewRole(interview: Interview) {
+    const application = applications.find((row) => row.job_id === interview.job_id);
+    return jobTitleFor(application);
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -279,16 +454,25 @@ export default function CandidateOverviewPage() {
                   <p className="text-sm text-gray-600 mt-1">
                     {candidate.email} · {candidate.phone}
                   </p>
-                  {candidate.resume_url && (
-                    <a
-                      href={candidate.resume_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {candidate.resume_url && (
+                      <a
+                        href={candidate.resume_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                      >
+                        View / Download Resume
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={openEmailModal}
+                      className="inline-flex rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
                     >
-                      View / Download Resume
-                    </a>
-                  )}
+                      Email Candidate
+                    </button>
+                  </div>
                 </div>
                 <span
                   className={`px-2 py-1 rounded text-xs font-bold ${
@@ -383,6 +567,13 @@ export default function CandidateOverviewPage() {
                               Rejection reason: {application.rejection_reason}
                             </p>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => openInterviewModal(application)}
+                            className="mt-2 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50"
+                          >
+                            + Schedule Interview
+                          </button>
                         </div>
                         <label className="text-sm text-gray-700">
                           Stage
@@ -415,6 +606,70 @@ export default function CandidateOverviewPage() {
 
             <section className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">Notes & activity</h2>
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-gray-800">Scheduled interviews</h3>
+                {interviews.length === 0 ? (
+                  <p className="text-sm text-gray-500">No interviews scheduled yet.</p>
+                ) : (
+                  <>
+                    {upcomingInterviews.length > 0 && (
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Upcoming</p>
+                        <ul className="space-y-2">
+                          {upcomingInterviews.map((interview) => (
+                            <li
+                              key={interview.id || `${interview.job_id}-${interview.scheduled_at}`}
+                              className="rounded-lg border border-blue-100 bg-blue-50/50 p-3 text-sm"
+                            >
+                              <p className="font-medium text-gray-900">
+                                {interview.round_name || 'Interview'} · {interviewRole(interview)}
+                              </p>
+                              <p className="text-xs text-gray-600 mt-1">
+                                {formatWhen(interview.scheduled_at)}
+                                {interview.interviewer_names ? ` · ${interview.interviewer_names}` : ''}
+                              </p>
+                              {interview.meeting_link && (
+                                <a
+                                  href={interview.meeting_link}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-700 hover:underline"
+                                >
+                                  {interview.meeting_link}
+                                </a>
+                              )}
+                              {interview.notes && (
+                                <p className="text-xs text-gray-700 mt-1">{interview.notes}</p>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {pastInterviews.length > 0 && (
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Past</p>
+                        <ul className="space-y-2">
+                          {pastInterviews.map((interview) => (
+                            <li
+                              key={interview.id || `past-${interview.job_id}-${interview.scheduled_at}`}
+                              className="rounded-lg border p-3 text-sm text-gray-700"
+                            >
+                              <p className="font-medium">
+                                {interview.round_name || 'Interview'} · {interviewRole(interview)}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {formatWhen(interview.scheduled_at)}
+                                {interview.interviewer_names ? ` · ${interview.interviewer_names}` : ''}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
               <div>
                 <textarea
                   value={note}
@@ -514,6 +769,137 @@ export default function CandidateOverviewPage() {
                 className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white"
               >
                 Save and move stage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {interviewFor && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4">
+          <div className="w-full max-w-md space-y-3 rounded-xl bg-white p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Schedule interview</h2>
+            <p className="text-sm text-gray-600">{jobTitleFor(interviewFor)}</p>
+            <label className="block text-sm text-gray-700">
+              Round
+              <select
+                value={roundName}
+                onChange={(e) => setRoundName(e.target.value)}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              >
+                {ROUND_NAMES.map((round) => (
+                  <option key={round} value={round}>
+                    {round}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm text-gray-700">
+              Interviewer names
+              <input
+                type="text"
+                value={interviewerNames}
+                onChange={(e) => setInterviewerNames(e.target.value)}
+                placeholder="Arjun Mehta, Lead Architect"
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Date and time
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+                required
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Meeting link
+              <input
+                type="url"
+                value={meetingLink}
+                onChange={(e) => setMeetingLink(e.target.value)}
+                placeholder="https://meet.google.com/..."
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Notes
+              <textarea
+                value={interviewNotes}
+                onChange={(e) => setInterviewNotes(e.target.value)}
+                rows={3}
+                placeholder="Optional instructions for the panel or candidate"
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setInterviewFor(null)} className="px-3 py-2 text-sm">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveInterview()}
+                disabled={savingInterview}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-400"
+              >
+                {savingInterview ? 'Saving...' : 'Save interview'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {emailOpen && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4">
+          <div className="w-full max-w-lg space-y-3 rounded-xl bg-white p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Email candidate</h2>
+            <div className="flex flex-wrap gap-2">
+              {EMAIL_TEMPLATES.map((template) => (
+                <button
+                  key={template}
+                  type="button"
+                  onClick={() => applyEmailTemplate(template)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                    emailTemplate === template
+                      ? 'bg-blue-600 text-white'
+                      : 'border border-gray-300 text-gray-800 hover:bg-gray-50'
+                  }`}
+                >
+                  {template}
+                </button>
+              ))}
+            </div>
+            <label className="block text-sm text-gray-700">
+              Subject
+              <input
+                type="text"
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Body
+              <textarea
+                value={emailBody}
+                onChange={(e) => setEmailBody(e.target.value)}
+                rows={10}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setEmailOpen(false)} className="px-3 py-2 text-sm">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void sendViaMailClient()}
+                disabled={sendingEmail}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-400"
+              >
+                {sendingEmail ? 'Opening...' : 'Send via Mail Client'}
               </button>
             </div>
           </div>
