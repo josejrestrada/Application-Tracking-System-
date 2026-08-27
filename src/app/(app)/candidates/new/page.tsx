@@ -94,6 +94,31 @@ function phonesMatch(stored: string | null | undefined, input: string) {
   return a.length >= 10 && a === b;
 }
 
+function isAllowedResume(file: File) {
+  const name = file.name.toLowerCase();
+  return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');
+}
+
+function uniqueResumePath(file: File) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${Date.now()}-${safeName}`;
+}
+
+async function uploadResume(file: File) {
+  if (!isAllowedResume(file)) {
+    throw new Error('Resume must be a PDF, DOC, or DOCX file.');
+  }
+  const path = uniqueResumePath(file);
+  const { error } = await supabase.storage.from('resumes').upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from('resumes').getPublicUrl(path);
+  if (!data?.publicUrl) throw new Error('Unable to resolve public resume URL.');
+  return data.publicUrl;
+}
+
 async function findExistingByEmailOrPhone(email: string, phone: string) {
   const emailNorm = normalizeEmail(email);
   const phoneTrim = phone.trim();
@@ -183,6 +208,7 @@ export default function NewCandidatePage() {
   const [submitting, setSubmitting] = useState(false);
   const [jobConflict, setJobConflict] = useState<string | null>(null);
   const [dpdpConsent, setDpdpConsent] = useState(false);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
 
   // Fetch active open jobs from Supabase
   useEffect(() => {
@@ -289,6 +315,10 @@ export default function NewCandidatePage() {
 
       const recruiterName =
         user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter';
+      let resumeUrl: string | null = null;
+      if (resumeFile) {
+        resumeUrl = await uploadResume(resumeFile);
+      }
       const profile = {
         full_name: formData.full_name,
         email: normalizeEmail(formData.email),
@@ -306,6 +336,7 @@ export default function NewCandidatePage() {
         dpdp_consent_given: true,
         dpdp_consent_timestamp: new Date().toISOString(),
         retention_expiry_date: retentionExpiryFromCreatedAt(match?.created_at),
+        ...(resumeUrl ? { resume_url: resumeUrl } : {}),
       };
 
       let candidateId = match?.id;
@@ -536,6 +567,17 @@ export default function NewCandidatePage() {
               value={formData.skills}
               onChange={(e) => setFormData({ ...formData, skills: e.target.value })}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Resume Upload</label>
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx"
+              className="mt-1 block w-full text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-blue-700"
+              onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
+            />
+            <p className="mt-1 text-xs text-gray-500">PDF, DOC, or DOCX. Stored in the resumes bucket.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

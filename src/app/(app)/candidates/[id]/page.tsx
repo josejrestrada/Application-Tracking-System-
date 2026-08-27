@@ -76,6 +76,7 @@ type Candidate = {
   source_type?: string | null;
   assigned_recruiter_name?: string | null;
   status?: string | null;
+  resume_url?: string | null;
   applications?: Application[] | null;
 };
 
@@ -278,6 +279,16 @@ export default function CandidateOverviewPage() {
                   <p className="text-sm text-gray-600 mt-1">
                     {candidate.email} · {candidate.phone}
                   </p>
+                  {candidate.resume_url && (
+                    <a
+                      href={candidate.resume_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      View / Download Resume
+                    </a>
+                  )}
                 </div>
                 <span
                   className={`px-2 py-1 rounded text-xs font-bold ${

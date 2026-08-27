@@ -1,10 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
 import { daysUntilRetentionExpiry } from '@/lib/dpdp';
 import Link from 'next/link';
+
+const NOTICE_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: '15', label: 'Immediate / 15 Days' },
+  { value: '30', label: '30 Days' },
+  { value: '60', label: '60 Days' },
+  { value: '90', label: '90 Days' },
+] as const;
 
 type ApplicationJob = {
   title?: string;
@@ -29,6 +37,30 @@ function skillList(candidate: { skills?: string[] | null }) {
 
 function candidateApplications(candidate: { applications?: Application[] | null }) {
   return candidate.applications || [];
+}
+
+function matchesSearch(candidate: any, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const skills = skillList(candidate).join(' ');
+  const haystack = [candidate.full_name, candidate.email, candidate.current_company, skills]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(q);
+}
+
+function matchesNotice(candidate: any, maxDays: string) {
+  if (maxDays === 'all') return true;
+  const notice = Number(candidate.notice_period_days || 0);
+  return notice <= Number(maxDays);
+}
+
+function matchesExperience(candidate: any, minYears: string, maxYears: string) {
+  const years = Number(candidate.total_experience_years || 0);
+  if (minYears !== '' && years < Number(minYears)) return false;
+  if (maxYears !== '' && years > Number(maxYears)) return false;
+  return true;
 }
 
 function NoticeMatchBadge({
@@ -87,6 +119,21 @@ export default function CandidatesListPage() {
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [anonymizingId, setAnonymizingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [noticeFilter, setNoticeFilter] = useState<string>('all');
+  const [minExperience, setMinExperience] = useState('');
+  const [maxExperience, setMaxExperience] = useState('');
+
+  const filteredCandidates = useMemo(
+    () =>
+      candidates.filter(
+        (candidate) =>
+          matchesSearch(candidate, searchQuery) &&
+          matchesNotice(candidate, noticeFilter) &&
+          matchesExperience(candidate, minExperience, maxExperience)
+      ),
+    [candidates, searchQuery, noticeFilter, minExperience, maxExperience]
+  );
 
   async function fetchCandidates() {
     const { data } = await supabase
@@ -142,6 +189,57 @@ export default function CandidatesListPage() {
           </Link>
         </div>
 
+        <div className="mb-4 grid gap-3 rounded-xl border bg-white p-4 shadow-sm md:grid-cols-4">
+          <label className="block text-sm text-gray-700 md:col-span-2">
+            Search
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Name, email, company, or skill"
+              className="mt-1 w-full border rounded-md p-2 text-black"
+            />
+          </label>
+          <label className="block text-sm text-gray-700">
+            Notice period
+            <select
+              value={noticeFilter}
+              onChange={(e) => setNoticeFilter(e.target.value)}
+              className="mt-1 w-full border rounded-md p-2 text-black"
+            >
+              {NOTICE_FILTERS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-sm text-gray-700">
+              Min exp (yrs)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={minExperience}
+                onChange={(e) => setMinExperience(e.target.value)}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Max exp (yrs)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={maxExperience}
+                onChange={(e) => setMaxExperience(e.target.value)}
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+          </div>
+        </div>
+
         {loading ? (
           <p className="text-gray-500">Loading pipeline...</p>
         ) : (
@@ -168,8 +266,14 @@ export default function CandidatesListPage() {
                       No candidates in database. Click "+ Add Candidate" to enter your first candidate.
                     </td>
                   </tr>
+                ) : filteredCandidates.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                      No candidates match the current search or filters.
+                    </td>
+                  </tr>
                 ) : (
-                  candidates.map((c) => (
+                  filteredCandidates.map((c) => (
                     <tr key={c.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">
                         <Link href={`/candidates/${c.id}`} className="text-blue-700 hover:underline">
