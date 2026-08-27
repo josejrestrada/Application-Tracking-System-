@@ -4,6 +4,8 @@ export default function SignInPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f3efe6] p-6">
       <SignIn
+        routing="path"
+        path="/sign-in"
         forceRedirectUrl="/candidates"
         signUpUrl="/sign-up"
         appearance={{

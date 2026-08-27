@@ -46,9 +46,9 @@ export default function LoginPage() {
 
             {mode === "in" ? (
               <SignIn
-                routing="hash"
+                routing="virtual"
                 forceRedirectUrl="/candidates"
-                signUpUrl="#signup"
+                signUpUrl="/sign-up"
                 appearance={{
                   variables: { colorPrimary: "#0f6e67" },
                   layout: { socialButtonsVariant: "blockButton" },
@@ -56,9 +56,9 @@ export default function LoginPage() {
               />
             ) : (
               <SignUp
-                routing="hash"
+                routing="virtual"
                 forceRedirectUrl="/candidates"
-                signInUrl="#signin"
+                signInUrl="/login"
                 appearance={{
                   variables: { colorPrimary: "#0f6e67" },
                   layout: { socialButtonsVariant: "blockButton" },
