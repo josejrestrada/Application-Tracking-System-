@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
 import { daysUntilRetentionExpiry } from '@/lib/dpdp';
+import { formatFeeLpa } from '@/lib/agency';
 
 const PIPELINE_STAGES = [
   'Applied',
@@ -61,6 +62,9 @@ type CandidateRow = {
   status?: string | null;
   retention_expiry_date?: string | null;
   created_at?: string | null;
+  agency_fee_amount?: number | null;
+  bgv_status?: string | null;
+  bgv_vendor_name?: string | null;
 };
 
 function jobFromApplication(application: ApplicationRow) {
@@ -96,13 +100,24 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const [jobsRes, candidatesRes, projectsRes] = await Promise.all([
+      const [jobsRes, projectsRes] = await Promise.all([
         supabase.from('jobs').select('id, title, status, created_at'),
-        supabase
-          .from('candidates')
-          .select('id, full_name, email, source_type, status, retention_expiry_date, created_at'),
         supabase.from('projects').select('id', { count: 'exact', head: true }),
       ]);
+
+      let candidatesRes = await supabase
+        .from('candidates')
+        .select(
+          'id, full_name, email, source_type, status, retention_expiry_date, created_at, agency_fee_amount, bgv_status, bgv_vendor_name'
+        );
+      if (
+        candidatesRes.error &&
+        /agency_fee_amount|bgv_status|bgv_vendor_name/i.test(candidatesRes.error.message)
+      ) {
+        candidatesRes = await supabase
+          .from('candidates')
+          .select('id, full_name, email, source_type, status, retention_expiry_date, created_at');
+      }
 
       let applicationsRes = await supabase
         .from('applications')
@@ -209,6 +224,27 @@ export default function DashboardPage() {
     }).length;
     const sourceMax = Math.max(1, ...sourceCounts.map((row) => row.count), otherSourceCount);
 
+    const agencyCandidates = candidates.filter(
+      (candidate) => candidate.source_type === 'Staffing Agency'
+    );
+    let agencyFeeCommitted = 0;
+    let agencyFeePaid = 0;
+    for (const candidate of agencyCandidates) {
+      const fee = Number(candidate.agency_fee_amount || 0);
+      const apps = appsByCandidate.get(candidate.id) || [];
+      if (apps.some((application) => application.stage === 'Joined')) {
+        agencyFeePaid += fee;
+      } else if (apps.some((application) => application.stage === 'Offered')) {
+        agencyFeeCommitted += fee;
+      }
+    }
+    const agencyFeeTotal = agencyFeeCommitted + agencyFeePaid;
+
+    const pendingBgv = candidates.filter((candidate) => {
+      const status = candidate.bgv_status || '';
+      return status === 'Pending' || status === 'In Progress';
+    });
+
     return {
       openJobs: openJobs.length,
       activeCandidates: activeCandidates.length,
@@ -222,6 +258,10 @@ export default function DashboardPage() {
       sourceCounts,
       otherSourceCount,
       sourceMax,
+      agencyFeeTotal,
+      agencyFeeCommitted,
+      agencyFeePaid,
+      pendingBgv,
     };
   }, [applications, candidates, jobs]);
 
@@ -255,7 +295,7 @@ export default function DashboardPage() {
               </p>
             )}
 
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               <KpiCard label="Active openings" value={String(metrics.openJobs)} hint="Jobs with status open" />
               <KpiCard
                 label="Total active candidates"
@@ -275,6 +315,11 @@ export default function DashboardPage() {
                     ? 'Needs Joined apps with joining date'
                     : `Across ${metrics.fillSampleSize} joined hire${metrics.fillSampleSize === 1 ? '' : 's'}`
                 }
+              />
+              <KpiCard
+                label="Agency fee committed / paid"
+                value={formatFeeLpa(metrics.agencyFeeTotal)}
+                hint={`Committed ${formatFeeLpa(metrics.agencyFeeCommitted)} · Paid ${formatFeeLpa(metrics.agencyFeePaid)}`}
               />
             </section>
 
@@ -296,7 +341,7 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="grid gap-6 lg:grid-cols-3">
               <section className="bg-white border rounded-xl p-5 shadow-sm">
                 <h2 className="text-lg font-semibold text-gray-900">High risk offers</h2>
                 <p className="text-xs text-gray-500 mb-3">Applications with offer_drop_risk = High</p>
@@ -320,6 +365,28 @@ export default function DashboardPage() {
                           {application.expected_joining_date
                             ? ` · Joining ${String(application.expected_joining_date).slice(0, 10)}`
                             : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="bg-white border rounded-xl p-5 shadow-sm">
+                <h2 className="text-lg font-semibold text-gray-900">Pending BGV verification</h2>
+                <p className="text-xs text-gray-500 mb-3">BGV status Pending or In Progress</p>
+                {metrics.pendingBgv.length === 0 ? (
+                  <p className="text-sm text-gray-500">No pending background checks.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {metrics.pendingBgv.map((candidate) => (
+                      <li key={candidate.id} className="rounded-lg border px-3 py-2 text-sm">
+                        <Link href={`/candidates/${candidate.id}`} className="font-medium text-blue-700 hover:underline">
+                          {candidate.full_name || 'Unnamed'}
+                        </Link>
+                        <p className="text-xs text-gray-600 mt-1">
+                          {candidate.bgv_status || 'Pending'}
+                          {candidate.bgv_vendor_name ? ` · ${candidate.bgv_vendor_name}` : ''}
                         </p>
                       </li>
                     ))}

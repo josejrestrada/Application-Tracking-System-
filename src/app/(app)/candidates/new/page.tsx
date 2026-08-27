@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
 import { retentionExpiryFromCreatedAt } from '@/lib/dpdp';
+import { calcAgencyFeeAmount, formatFeeLpa } from '@/lib/agency';
 import { useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, UserCheck } from 'lucide-react';
@@ -35,6 +36,10 @@ type CandidateRecord = {
   current_company?: string | null;
   total_experience_years?: number | null;
   skills?: string[] | null;
+  source_type?: string | null;
+  agency_name?: string | null;
+  agency_fee_pct?: number | null;
+  agency_fee_amount?: number | null;
   applications?: ApplicationRow[] | null;
 };
 
@@ -195,6 +200,7 @@ export default function NewCandidatePage() {
     current_ctc: '',
     expected_ctc: '',
     source_type: 'Naukri',
+    agency_name: '',
     agency_fee_pct: '8.33',
     current_company: '',
     total_experience_years: '',
@@ -260,6 +266,10 @@ export default function NewCandidatePage() {
           current_ctc: match.current_ctc?.toString() || prev.current_ctc,
           expected_ctc: match.expected_ctc?.toString() || prev.expected_ctc,
           current_company: match.current_company || prev.current_company,
+          source_type: match.source_type || prev.source_type,
+          agency_name: match.agency_name || prev.agency_name,
+          agency_fee_pct:
+            match.agency_fee_pct != null ? String(match.agency_fee_pct) : prev.agency_fee_pct,
           total_experience_years:
             match.total_experience_years?.toString() || prev.total_experience_years,
           skills: match.skills?.length ? skillsToInput(match.skills) : prev.skills,
@@ -319,15 +329,26 @@ export default function NewCandidatePage() {
       if (resumeFile) {
         resumeUrl = await uploadResume(resumeFile);
       }
+      const expectedCtc = parseFloat(formData.expected_ctc) || 0;
+      const isAgency = formData.source_type === 'Staffing Agency';
+      const agencyFeePct = isAgency ? parseFloat(formData.agency_fee_pct) || 8.33 : null;
+      const agencyName = isAgency ? formData.agency_name.trim() : '';
+      if (isAgency && !agencyName) {
+        alert('Enter the staffing agency name.');
+        setSubmitting(false);
+        return;
+      }
       const profile = {
         full_name: formData.full_name,
         email: normalizeEmail(formData.email),
         phone: formData.phone.trim(),
         notice_period_days: parseInt(formData.notice_period_days, 10) || 0,
         current_ctc: parseFloat(formData.current_ctc) || 0,
-        expected_ctc: parseFloat(formData.expected_ctc) || 0,
+        expected_ctc: expectedCtc,
         source_type: formData.source_type,
-        agency_fee_pct: parseFloat(formData.agency_fee_pct) || 8.33,
+        agency_name: isAgency ? agencyName : null,
+        agency_fee_pct: agencyFeePct,
+        agency_fee_amount: isAgency ? calcAgencyFeeAmount(expectedCtc, agencyFeePct || 0) : null,
         current_company: formData.current_company.trim() || null,
         total_experience_years: parseFloat(formData.total_experience_years) || 0,
         skills: splitCsv(formData.skills),
@@ -597,15 +618,39 @@ export default function NewCandidatePage() {
             </div>
 
             {formData.source_type === 'Staffing Agency' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Agency Fee (%)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  className="mt-1 block w-full border rounded-md p-2 text-black"
-                  value={formData.agency_fee_pct}
-                  onChange={(e) => setFormData({ ...formData, agency_fee_pct: e.target.value })}
-                />
+              <div className="col-span-2 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Agency name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Hudson RPO"
+                    className="mt-1 block w-full border rounded-md p-2 text-black"
+                    value={formData.agency_name}
+                    onChange={(e) => setFormData({ ...formData, agency_name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Agency Fee (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    className="mt-1 block w-full border rounded-md p-2 text-black"
+                    value={formData.agency_fee_pct}
+                    onChange={(e) => setFormData({ ...formData, agency_fee_pct: e.target.value })}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Fee amount:{' '}
+                    {formatFeeLpa(
+                      calcAgencyFeeAmount(
+                        parseFloat(formData.expected_ctc) || 0,
+                        parseFloat(formData.agency_fee_pct) || 8.33
+                      )
+                    )}{' '}
+                    (expected CTC × fee %)
+                  </p>
+                </div>
               </div>
             )}
           </div>

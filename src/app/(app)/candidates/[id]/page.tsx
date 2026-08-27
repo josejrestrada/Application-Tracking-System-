@@ -7,6 +7,7 @@ import { useUser } from '@clerk/nextjs';
 import Navbar from '@/components/Navbar';
 import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
 import { daysUntilRetentionExpiry } from '@/lib/dpdp';
+import { calcAgencyFeeAmount, formatFeeLpa } from '@/lib/agency';
 
 const PIPELINE_STAGES = [
   'Applied',
@@ -37,6 +38,8 @@ const REJECTION_REASONS = [
 const ROUND_NAMES = ['L1 Technical', 'Client Interview', 'HR Round', 'System Design'] as const;
 
 const EMAIL_TEMPLATES = ['Interview Invite', 'Rejection Note', 'Offer Letter Notice'] as const;
+
+const BGV_STATUSES = ['Pending', 'In Progress', 'Cleared', 'Failed'] as const;
 
 type Application = {
   id?: string;
@@ -93,6 +96,13 @@ type Candidate = {
   assigned_recruiter_name?: string | null;
   status?: string | null;
   resume_url?: string | null;
+  agency_name?: string | null;
+  agency_fee_pct?: number | null;
+  agency_fee_amount?: number | null;
+  bgv_status?: string | null;
+  bgv_vendor_name?: string | null;
+  bgv_remarks?: string | null;
+  bgv_completed_at?: string | null;
   applications?: Application[] | null;
 };
 
@@ -141,6 +151,13 @@ export default function CandidateOverviewPage() {
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [agencyName, setAgencyName] = useState('');
+  const [agencyFeePct, setAgencyFeePct] = useState('8.33');
+  const [savingAgency, setSavingAgency] = useState(false);
+  const [bgvStatus, setBgvStatus] = useState<(typeof BGV_STATUSES)[number]>('Pending');
+  const [bgvVendor, setBgvVendor] = useState('');
+  const [bgvRemarks, setBgvRemarks] = useState('');
+  const [savingBgv, setSavingBgv] = useState(false);
 
   const recruiterName =
     user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter';
@@ -177,6 +194,15 @@ export default function CandidateOverviewPage() {
     setCandidate((candidateRow as Candidate) || null);
     setActivities((activityRows as Activity[]) || []);
     setInterviews((interviewRows as Interview[]) || []);
+    const loaded = candidateRow as Candidate | null;
+    if (loaded) {
+      setAgencyName(loaded.agency_name || '');
+      setAgencyFeePct(loaded.agency_fee_pct != null ? String(loaded.agency_fee_pct) : '8.33');
+      const status = (loaded.bgv_status || 'Pending') as (typeof BGV_STATUSES)[number];
+      setBgvStatus(BGV_STATUSES.includes(status) ? status : 'Pending');
+      setBgvVendor(loaded.bgv_vendor_name || '');
+      setBgvRemarks(loaded.bgv_remarks || '');
+    }
     setLoading(false);
   }
 
@@ -399,6 +425,71 @@ export default function CandidateOverviewPage() {
     }
   }
 
+  async function saveAgencyFee() {
+    if (!id || !candidate) return;
+    const pct = parseFloat(agencyFeePct) || 8.33;
+    const expected = Number(candidate.expected_ctc || 0);
+    if (!agencyName.trim()) {
+      alert('Enter the staffing agency name.');
+      return;
+    }
+    setSavingAgency(true);
+    try {
+      const amount = calcAgencyFeeAmount(expected, pct);
+      const { error } = await supabase
+        .from('candidates')
+        .update({
+          agency_name: agencyName.trim(),
+          agency_fee_pct: pct,
+          agency_fee_amount: amount,
+        })
+        .eq('id', id);
+      if (error) throw error;
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to save agency fee.');
+    } finally {
+      setSavingAgency(false);
+    }
+  }
+
+  async function saveBgv() {
+    if (!id) return;
+    setSavingBgv(true);
+    try {
+      const completed = bgvStatus === 'Cleared' || bgvStatus === 'Failed';
+      const keepCompletedAt =
+        completed &&
+        candidate?.bgv_status === bgvStatus &&
+        candidate.bgv_completed_at
+          ? candidate.bgv_completed_at
+          : completed
+            ? new Date().toISOString()
+            : null;
+      const { error } = await supabase
+        .from('candidates')
+        .update({
+          bgv_status: bgvStatus,
+          bgv_vendor_name: bgvVendor.trim() || null,
+          bgv_remarks: bgvRemarks.trim() || null,
+          bgv_completed_at: keepCompletedAt,
+        })
+        .eq('id', id);
+      if (error) throw error;
+      await logActivity(
+        'BGV Status Changed',
+        `${bgvStatus}${bgvVendor.trim() ? ` · vendor ${bgvVendor.trim()}` : ''}${
+          bgvRemarks.trim() ? ` · ${bgvRemarks.trim()}` : ''
+        }`
+      );
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to save BGV status.');
+    } finally {
+      setSavingBgv(false);
+    }
+  }
+
   async function addNote() {
     const text = note.trim();
     if (!text) return;
@@ -507,6 +598,21 @@ export default function CandidateOverviewPage() {
                   <dt className="text-xs uppercase tracking-wide text-gray-500">Source</dt>
                   <dd className="font-medium text-gray-900">{candidate.source_type || '—'}</dd>
                 </div>
+                {candidate.source_type === 'Staffing Agency' && (
+                  <>
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-gray-500">Agency</dt>
+                      <dd className="font-medium text-gray-900">{candidate.agency_name || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-gray-500">Agency fee</dt>
+                      <dd className="font-medium text-gray-900">
+                        {candidate.agency_fee_pct ?? 8.33}% ·{' '}
+                        {formatFeeLpa(candidate.agency_fee_amount)}
+                      </dd>
+                    </div>
+                  </>
+                )}
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-gray-500">DPDP expiry</dt>
                   <dd className="font-medium text-gray-900">
@@ -531,6 +637,55 @@ export default function CandidateOverviewPage() {
                       ))}
                 </div>
               </div>
+              {candidate.source_type === 'Staffing Agency' && (
+                <div className="mt-5 border-t pt-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Agency fee</h3>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm text-gray-700">
+                      Agency name
+                      <input
+                        type="text"
+                        value={agencyName}
+                        onChange={(e) => setAgencyName(e.target.value)}
+                        className="mt-1 w-full border rounded-md p-2 text-black"
+                      />
+                    </label>
+                    <label className="block text-sm text-gray-700">
+                      Agency fee (%)
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={agencyFeePct}
+                        onChange={(e) => setAgencyFeePct(e.target.value)}
+                        className="mt-1 w-full border rounded-md p-2 text-black"
+                      />
+                    </label>
+                  </div>
+                  <p className="text-sm text-gray-700">
+                    Calculated fee:{' '}
+                    <span className="font-medium">
+                      {formatFeeLpa(
+                        calcAgencyFeeAmount(
+                          Number(candidate.expected_ctc || 0),
+                          parseFloat(agencyFeePct) || 8.33
+                        )
+                      )}
+                    </span>{' '}
+                    <span className="text-xs text-gray-500">
+                      (expected CTC {candidate.expected_ctc ?? 0} LPA × {agencyFeePct || 8.33}%)
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void saveAgencyFee()}
+                    disabled={savingAgency}
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-400"
+                  >
+                    {savingAgency ? 'Saving...' : 'Save agency fee'}
+                  </button>
+                </div>
+              )}
             </section>
 
             <section className="bg-white border rounded-xl p-5 shadow-sm">
@@ -602,6 +757,116 @@ export default function CandidateOverviewPage() {
                   })}
                 </div>
               )}
+            </section>
+
+            <section className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">Background verification</h2>
+                {candidate.bgv_completed_at && (
+                  <p className="text-xs text-gray-500">
+                    Completed {formatWhen(candidate.bgv_completed_at)}
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm text-gray-700">
+                  BGV status
+                  <select
+                    value={bgvStatus}
+                    onChange={(e) => setBgvStatus(e.target.value as (typeof BGV_STATUSES)[number])}
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                  >
+                    {BGV_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm text-gray-700">
+                  BGV vendor
+                  <input
+                    type="text"
+                    value={bgvVendor}
+                    onChange={(e) => setBgvVendor(e.target.value)}
+                    placeholder="Vendor / agency name"
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                  />
+                </label>
+              </div>
+              <label className="block text-sm text-gray-700">
+                BGV remarks
+                <textarea
+                  value={bgvRemarks}
+                  onChange={(e) => setBgvRemarks(e.target.value)}
+                  rows={3}
+                  placeholder="Notes from the verification vendor or recruiter"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void saveBgv()}
+                disabled={savingBgv}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-400"
+              >
+                {savingBgv ? 'Saving...' : 'Save BGV status'}
+              </button>
+            </section>
+
+            <section className="bg-white border rounded-xl p-5 shadow-sm space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">Background verification</h2>
+                {candidate.bgv_completed_at && (
+                  <p className="text-xs text-gray-500">
+                    Completed {formatWhen(candidate.bgv_completed_at)}
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm text-gray-700">
+                  BGV status
+                  <select
+                    value={bgvStatus}
+                    onChange={(e) => setBgvStatus(e.target.value as (typeof BGV_STATUSES)[number])}
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                  >
+                    {BGV_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm text-gray-700">
+                  BGV vendor
+                  <input
+                    type="text"
+                    value={bgvVendor}
+                    onChange={(e) => setBgvVendor(e.target.value)}
+                    placeholder="Vendor / agency name"
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                  />
+                </label>
+              </div>
+              <label className="block text-sm text-gray-700">
+                BGV remarks
+                <textarea
+                  value={bgvRemarks}
+                  onChange={(e) => setBgvRemarks(e.target.value)}
+                  rows={3}
+                  placeholder="Notes from the verification vendor or recruiter"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void saveBgv()}
+                disabled={savingBgv}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-400"
+              >
+                {savingBgv ? 'Saving...' : 'Save BGV status'}
+              </button>
             </section>
 
             <section className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
