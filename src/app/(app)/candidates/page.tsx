@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
+import { daysUntilRetentionExpiry } from '@/lib/dpdp';
 import Link from 'next/link';
 
 type AssignedJob = {
@@ -47,21 +48,69 @@ function NoticeMatchBadge({
   );
 }
 
+function DpdpStatusBadge({
+  expiry,
+  createdAt,
+}: {
+  expiry?: string | null;
+  createdAt?: string | null;
+}) {
+  const remaining = daysUntilRetentionExpiry(expiry, createdAt);
+  if (remaining < 0) {
+    return (
+      <span className="px-2 py-1 rounded text-xs font-bold bg-red-100 text-red-800">
+        Consent Expired
+      </span>
+    );
+  }
+  return (
+    <span className="px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-800">
+      Consent Active · {remaining}d left
+    </span>
+  );
+}
+
 export default function CandidatesListPage() {
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [anonymizingId, setAnonymizingId] = useState<string | null>(null);
+
+  async function fetchCandidates() {
+    const { data } = await supabase
+      .from('candidates')
+      .select(CANDIDATE_JOB_SELECT)
+      .order('created_at', { ascending: false });
+    setCandidates(data || []);
+    setLoading(false);
+  }
 
   useEffect(() => {
-    async function fetchCandidates() {
-      const { data } = await supabase
-        .from('candidates')
-        .select(CANDIDATE_JOB_SELECT)
-        .order('created_at', { ascending: false });
-      setCandidates(data || []);
-      setLoading(false);
-    }
-    fetchCandidates();
+    void fetchCandidates();
   }, []);
+
+  async function anonymizeCandidate(candidate: { id: string; status?: string }) {
+    if (candidate.status === 'Anonymized') return;
+    const confirmed = window.confirm(
+      'This will permanently scrub name, email, and phone (Right to be Forgotten). Continue?'
+    );
+    if (!confirmed) return;
+    setAnonymizingId(candidate.id);
+    const { error } = await supabase
+      .from('candidates')
+      .update({
+        full_name: 'Anonymized Candidate',
+        email: 'purged@dpdp.local',
+        phone: '0000000000',
+        status: 'Anonymized',
+      })
+      .eq('id', candidate.id);
+    setAnonymizingId(null);
+    if (error) {
+      alert('Unable to anonymize candidate: ' + error.message);
+      return;
+    }
+    await fetchCandidates();
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -92,13 +141,15 @@ export default function CandidatesListPage() {
                   <th className="px-4 py-3 text-left">Assigned Job</th>
                   <th className="px-4 py-3 text-left">Notice Period</th>
                   <th className="px-4 py-3 text-left">Recruiter Owner</th>
+                  <th className="px-4 py-3 text-left">DPDP Status / Expiry</th>
                   <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 text-gray-800">
                 {candidates.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                       No candidates in database. Click "+ Add Candidate" to enter your first candidate.
                     </td>
                   </tr>
@@ -116,9 +167,29 @@ export default function CandidatesListPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-700">{c.assigned_recruiter_name || 'Unassigned'}</td>
                       <td className="px-4 py-3">
+                        <DpdpStatusBadge
+                          expiry={c.retention_expiry_date}
+                          createdAt={c.created_at}
+                        />
+                      </td>
+                      <td className="px-4 py-3">
                         <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs font-semibold">
                           {c.status}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {c.status === 'Anonymized' ? (
+                          <span className="text-xs text-gray-400">Purged</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void anonymizeCandidate(c)}
+                            disabled={anonymizingId === c.id}
+                            className="text-xs font-medium text-red-700 hover:underline disabled:opacity-50"
+                          >
+                            {anonymizingId === c.id ? 'Anonymizing...' : 'Right to be Forgotten'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))

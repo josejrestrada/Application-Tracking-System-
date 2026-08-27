@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
+import { retentionExpiryFromCreatedAt } from '@/lib/dpdp';
 import { useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, UserCheck } from 'lucide-react';
@@ -24,6 +25,7 @@ type CandidateRecord = {
   assigned_job_id: string | null;
   assigned_recruiter_name: string | null;
   status: string | null;
+  created_at?: string | null;
   jobs?: { id: string; title: string } | { id: string; title: string }[] | null;
 };
 
@@ -137,6 +139,7 @@ export default function NewCandidatePage() {
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [jobConflict, setJobConflict] = useState<string | null>(null);
+  const [dpdpConsent, setDpdpConsent] = useState(false);
 
   // Fetch active open jobs from Supabase
   useEffect(() => {
@@ -231,6 +234,9 @@ export default function NewCandidatePage() {
         assigned_recruiter_id: user?.id,
         assigned_recruiter_name:
           user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter',
+        dpdp_consent_given: true,
+        dpdp_consent_timestamp: new Date().toISOString(),
+        retention_expiry_date: retentionExpiryFromCreatedAt(match?.created_at),
       };
 
       let error;
@@ -416,9 +422,23 @@ export default function NewCandidatePage() {
             )}
           </div>
 
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-800">
+            <input
+              type="checkbox"
+              required
+              checked={dpdpConsent}
+              onChange={(e) => setDpdpConsent(e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              I confirm candidate consent has been collected for processing personal data under
+              India DPDP Act 2023.
+            </span>
+          </label>
+
           <button
             type="submit"
-            disabled={!!jobConflict || submitting || checking}
+            disabled={!!jobConflict || submitting || checking || !dpdpConsent}
             className={`w-full py-3 px-4 text-white font-bold rounded-md transition ${
               jobConflict ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
