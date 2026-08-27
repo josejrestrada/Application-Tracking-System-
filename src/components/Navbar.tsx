@@ -16,6 +16,9 @@ export default function Navbar() {
 
         {/* Navigation Links */}
         <div className="flex items-center space-x-6 text-sm font-medium text-gray-700">
+          <Link href="/dashboard" className="hover:text-blue-600 transition">
+            Dashboard
+          </Link>
           <Link href="/projects" className="hover:text-blue-600 transition">
             Projects & Jobs
           </Link>
