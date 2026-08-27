@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.8.0",
+    "@supabase/supabase-js": "^2.112.4",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.3",
     "jose": "^6.2.10",

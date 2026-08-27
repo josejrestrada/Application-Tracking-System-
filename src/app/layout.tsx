@@ -1,19 +1,6 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, Fraunces } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
-
-const sans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-sans",
-});
-
-const display = Fraunces({
-  subsets: ["latin"],
-  weight: ["600", "700"],
-  variable: "--font-display",
-});
 
 export const metadata: Metadata = {
   title: "Meridian ATS",
@@ -25,8 +12,13 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${sans.variable} ${display.variable} antialiased`}>
-        <ClerkProvider>
+      <body className="antialiased">
+        <ClerkProvider
+          telemetry={false}
+          signInUrl="/login"
+          signUpUrl="/sign-up"
+          afterSignOutUrl="/login"
+        >
           {children}
         </ClerkProvider>
       </body>
