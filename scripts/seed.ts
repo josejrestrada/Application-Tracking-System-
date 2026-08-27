@@ -28,7 +28,7 @@ async function insertOne<T extends Record<string, unknown>>(
   table: string,
   row: T
 ) {
-  const { data, error } = await supabase.from(table).insert([row]).select('id').single();
+  const { data, error } = await supabase.from(table).insert([row as any]).select('id').single();
   if (error || !data?.id) {
     const message = error?.message || 'missing id';
     if (/row-level security/i.test(message)) {
