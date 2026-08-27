@@ -30,5 +30,9 @@
     "@types/react-dom": "^19.1.3",
     "tailwindcss": "^4.1.6",
     "typescript": "^5.8.3"
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "sharp": true
   }
 }
