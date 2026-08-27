@@ -32,6 +32,9 @@ type CandidateRecord = {
   assigned_recruiter_name: string | null;
   status: string | null;
   created_at?: string | null;
+  current_company?: string | null;
+  total_experience_years?: number | null;
+  skills?: string[] | null;
   applications?: ApplicationRow[] | null;
 };
 
@@ -64,6 +67,17 @@ function collisionMessage(candidate: CandidateRecord, collisions: ApplicationRow
     .join(', ');
   const recruiter = collisions[0]?.recruiter_name || candidate.assigned_recruiter_name || 'System';
   return `COLLISION PREVENTED: "${candidate.full_name}" has already applied to ${names} (recruiter: ${recruiter}). Deselect those jobs to continue.`;
+}
+
+function splitCsv(value: string) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function skillsToInput(skills?: string[] | null) {
+  return (skills || []).join(', ');
 }
 
 function normalizeEmail(value: string) {
@@ -157,6 +171,9 @@ export default function NewCandidatePage() {
     expected_ctc: '',
     source_type: 'Naukri',
     agency_fee_pct: '8.33',
+    current_company: '',
+    total_experience_years: '',
+    skills: '',
   });
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [existingApplications, setExistingApplications] = useState<ApplicationRow[]>([]);
@@ -216,6 +233,10 @@ export default function NewCandidatePage() {
           notice_period_days: match.notice_period_days?.toString() || prev.notice_period_days,
           current_ctc: match.current_ctc?.toString() || prev.current_ctc,
           expected_ctc: match.expected_ctc?.toString() || prev.expected_ctc,
+          current_company: match.current_company || prev.current_company,
+          total_experience_years:
+            match.total_experience_years?.toString() || prev.total_experience_years,
+          skills: match.skills?.length ? skillsToInput(match.skills) : prev.skills,
         }));
         applyCollision(match, applications, selectedJobIds);
       } else {
@@ -277,6 +298,9 @@ export default function NewCandidatePage() {
         expected_ctc: parseFloat(formData.expected_ctc) || 0,
         source_type: formData.source_type,
         agency_fee_pct: parseFloat(formData.agency_fee_pct) || 8.33,
+        current_company: formData.current_company.trim() || null,
+        total_experience_years: parseFloat(formData.total_experience_years) || 0,
+        skills: splitCsv(formData.skills),
         assigned_recruiter_id: user?.id,
         assigned_recruiter_name: recruiterName,
         dpdp_consent_given: true,
@@ -478,6 +502,40 @@ export default function NewCandidatePage() {
                 onChange={(e) => setFormData({ ...formData, expected_ctc: e.target.value })}
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Current company</label>
+              <input
+                type="text"
+                className="mt-1 block w-full border rounded-md p-2 text-black"
+                value={formData.current_company}
+                onChange={(e) => setFormData({ ...formData, current_company: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Total experience (years)</label>
+              <input
+                type="number"
+                step="0.1"
+                min={0}
+                className="mt-1 block w-full border rounded-md p-2 text-black"
+                value={formData.total_experience_years}
+                onChange={(e) => setFormData({ ...formData, total_experience_years: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Skills (comma-separated)</label>
+            <input
+              type="text"
+              placeholder="Java, Spring Boot, Kafka"
+              className="mt-1 block w-full border rounded-md p-2 text-black"
+              value={formData.skills}
+              onChange={(e) => setFormData({ ...formData, skills: e.target.value })}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

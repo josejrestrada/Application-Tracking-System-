@@ -23,6 +23,10 @@ function applicationJob(application: Application) {
   return job ?? undefined;
 }
 
+function skillList(candidate: { skills?: string[] | null }) {
+  return Array.isArray(candidate.skills) ? candidate.skills : [];
+}
+
 function candidateApplications(candidate: { applications?: Application[] | null }) {
   return candidate.applications || [];
 }
@@ -146,6 +150,8 @@ export default function CandidatesListPage() {
               <thead className="bg-gray-50 text-gray-700 font-semibold">
                 <tr>
                   <th className="px-4 py-3 text-left">Candidate Name</th>
+                  <th className="px-4 py-3 text-left">Company / Experience</th>
+                  <th className="px-4 py-3 text-left">Skills</th>
                   <th className="px-4 py-3 text-left">Contact Info</th>
                   <th className="px-4 py-3 text-left">Applications</th>
                   <th className="px-4 py-3 text-left">Notice Period</th>
@@ -158,7 +164,7 @@ export default function CandidatesListPage() {
               <tbody className="divide-y divide-gray-200 text-gray-800">
                 {candidates.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                       No candidates in database. Click "+ Add Candidate" to enter your first candidate.
                     </td>
                   </tr>
@@ -166,6 +172,24 @@ export default function CandidatesListPage() {
                   candidates.map((c) => (
                     <tr key={c.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">{c.full_name}</td>
+                      <td className="px-4 py-3">
+                        <p>{c.current_company || '—'}</p>
+                        <p className="text-xs text-gray-500">{c.total_experience_years ?? 0} yrs</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {skillList(c).length === 0
+                            ? '—'
+                            : skillList(c).map((skill: string) => (
+                                <span
+                                  key={skill}
+                                  className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-xs"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{c.email}<br/><span className="text-xs text-gray-500">{c.phone}</span></td>
                       <td className="px-4 py-3">
                         {candidateApplications(c).length === 0 ? (

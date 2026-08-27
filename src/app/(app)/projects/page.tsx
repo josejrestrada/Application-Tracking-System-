@@ -18,8 +18,21 @@ type Job = {
   max_notice_period_days: number | null;
   open_positions: number | null;
   status: string | null;
+  required_skills?: string[] | null;
+  min_experience_years?: number | null;
+  max_experience_years?: number | null;
+  min_ctc?: number | null;
+  max_ctc?: number | null;
+  location?: string | null;
   projects?: { client_name: string; project_name: string } | { client_name: string; project_name: string }[] | null;
 };
+
+function splitCsv(value: string) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 function projectLabel(job: Job) {
   const project = Array.isArray(job.projects) ? job.projects[0] : job.projects;
@@ -43,7 +56,9 @@ export default function ProjectsPage() {
         .order('target_start_date', { ascending: true }),
       supabase
         .from('jobs')
-        .select('id, title, project_id, max_notice_period_days, open_positions, status, projects(client_name, project_name)')
+        .select(
+          'id, title, project_id, max_notice_period_days, open_positions, status, required_skills, min_experience_years, max_experience_years, min_ctc, max_ctc, location, projects(client_name, project_name)'
+        )
         .eq('status', 'open')
         .order('title', { ascending: true }),
     ]);
@@ -86,6 +101,12 @@ export default function ProjectsPage() {
         project_id: String(data.get('project_id') || '') || null,
         max_notice_period_days: Number(data.get('max_notice_period_days') || 0),
         open_positions: Number(data.get('open_positions') || 1),
+        required_skills: splitCsv(String(data.get('required_skills') || '')),
+        min_experience_years: Number(data.get('min_experience_years') || 0),
+        max_experience_years: Number(data.get('max_experience_years') || 0),
+        min_ctc: Number(data.get('min_ctc') || 0),
+        max_ctc: Number(data.get('max_ctc') || 0),
+        location: String(data.get('location') || '').trim() || null,
         status: 'open',
       },
     ]);
@@ -166,12 +187,16 @@ export default function ProjectsPage() {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-3">
                 Open job positions
               </h2>
-              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+              <div className="bg-white rounded-xl shadow-sm border overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50 text-gray-700 font-semibold">
                     <tr>
                       <th className="px-4 py-3 text-left">Role</th>
                       <th className="px-4 py-3 text-left">Client / Project</th>
+                      <th className="px-4 py-3 text-left">Location</th>
+                      <th className="px-4 py-3 text-left">Skills</th>
+                      <th className="px-4 py-3 text-left">Experience</th>
+                      <th className="px-4 py-3 text-left">Target CTC</th>
                       <th className="px-4 py-3 text-left">Max notice</th>
                       <th className="px-4 py-3 text-left">Openings</th>
                       <th className="px-4 py-3 text-left">Status</th>
@@ -180,7 +205,7 @@ export default function ProjectsPage() {
                   <tbody className="divide-y divide-gray-200 text-gray-800">
                     {jobs.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                           No open jobs. Create a job role against a client project.
                         </td>
                       </tr>
@@ -189,6 +214,27 @@ export default function ProjectsPage() {
                         <tr key={job.id}>
                           <td className="px-4 py-3 font-medium text-gray-900">{job.title}</td>
                           <td className="px-4 py-3">{projectLabel(job)}</td>
+                          <td className="px-4 py-3">{job.location || '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(job.required_skills || []).length === 0
+                                ? '—'
+                                : (job.required_skills || []).map((skill) => (
+                                    <span
+                                      key={skill}
+                                      className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-xs"
+                                    >
+                                      {skill}
+                                    </span>
+                                  ))}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {job.min_experience_years ?? 0}–{job.max_experience_years ?? 0} yrs
+                          </td>
+                          <td className="px-4 py-3">
+                            {job.min_ctc ?? 0}–{job.max_ctc ?? 0} LPA
+                          </td>
                           <td className="px-4 py-3">{job.max_notice_period_days ?? '—'} days</td>
                           <td className="px-4 py-3">{job.open_positions ?? 0}</td>
                           <td className="px-4 py-3">
@@ -257,7 +303,7 @@ export default function ProjectsPage() {
 
       {jobModal && (
         <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4">
-          <form onSubmit={createJob} className="w-full max-w-md space-y-3 rounded-xl bg-white p-5">
+          <form onSubmit={createJob} className="w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-3 rounded-xl bg-white p-5">
             <h2 className="text-lg font-semibold text-gray-900">New job role</h2>
             <label className="block text-sm text-gray-700">
               Title
@@ -278,6 +324,66 @@ export default function ProjectsPage() {
                 ))}
               </select>
             </label>
+            <label className="block text-sm text-gray-700">
+              Location
+              <input
+                name="location"
+                placeholder="Pune, Remote, Hybrid"
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <label className="block text-sm text-gray-700">
+              Required skills (comma-separated)
+              <input
+                name="required_skills"
+                placeholder="Java, Spring Boot, Kafka"
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm text-gray-700">
+                Min experience (years)
+                <input
+                  name="min_experience_years"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+              <label className="block text-sm text-gray-700">
+                Max experience (years)
+                <input
+                  name="max_experience_years"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm text-gray-700">
+                Min CTC (LPA)
+                <input
+                  name="min_ctc"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+              <label className="block text-sm text-gray-700">
+                Max CTC (LPA)
+                <input
+                  name="max_ctc"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                />
+              </label>
+            </div>
             <label className="block text-sm text-gray-700">
               Max notice period (days)
               <input
