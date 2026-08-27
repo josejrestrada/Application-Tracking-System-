@@ -171,7 +171,11 @@ export default function CandidatesListPage() {
                 ) : (
                   candidates.map((c) => (
                     <tr key={c.id}>
-                      <td className="px-4 py-3 font-medium text-gray-900">{c.full_name}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        <Link href={`/candidates/${c.id}`} className="text-blue-700 hover:underline">
+                          {c.full_name}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3">
                         <p>{c.current_company || '—'}</p>
                         <p className="text-xs text-gray-500">{c.total_experience_years ?? 0} yrs</p>
