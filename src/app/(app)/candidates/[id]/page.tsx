@@ -25,12 +25,29 @@ type JobEmbed = {
   max_notice_period_days?: number | null;
 };
 
+const REJECTION_REASONS = [
+  'Technical Fail',
+  'Culture Fit',
+  'Compensation Mismatch',
+  'Notice Period Too Long',
+  'Client Rejected',
+  'Other',
+] as const;
+
 type Application = {
   id?: string;
   job_id: string;
   stage?: string | null;
   recruiter_name?: string | null;
+  offered_ctc?: number | null;
+  expected_joining_date?: string | null;
+  rejection_reason?: string | null;
   jobs?: JobEmbed | JobEmbed[] | null;
+};
+
+type StagePrompt = {
+  application: Application;
+  stage: 'Offered' | 'Rejected';
 };
 
 type Activity = {
@@ -84,6 +101,10 @@ export default function CandidateOverviewPage() {
   const [note, setNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [updatingJobId, setUpdatingJobId] = useState<string | null>(null);
+  const [stagePrompt, setStagePrompt] = useState<StagePrompt | null>(null);
+  const [offeredCtc, setOfferedCtc] = useState('');
+  const [expectedJoiningDate, setExpectedJoiningDate] = useState('');
+  const [rejectionReason, setRejectionReason] = useState<string>(REJECTION_REASONS[0]);
 
   const recruiterName =
     user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter';
@@ -128,23 +149,90 @@ export default function CandidateOverviewPage() {
     if (error) throw error;
   }
 
-  async function updateStage(application: Application, stage: string) {
-    if (!application.job_id || application.stage === stage) return;
+  async function updateStage(
+    application: Application,
+    stage: string,
+    extras?: {
+      offered_ctc?: number | null;
+      expected_joining_date?: string | null;
+      rejection_reason?: string | null;
+    }
+  ) {
+    if (!application.job_id || (application.stage === stage && !extras)) return;
     setUpdatingJobId(application.job_id);
     try {
-      let query = supabase.from('applications').update({ stage }).eq('candidate_id', id).eq('job_id', application.job_id);
+      const payload = {
+        stage,
+        ...(stage === 'Offered'
+          ? {
+              offered_ctc: extras?.offered_ctc ?? null,
+              expected_joining_date: extras?.expected_joining_date ?? null,
+              rejection_reason: null,
+            }
+          : {}),
+        ...(stage === 'Rejected'
+          ? {
+              rejection_reason: extras?.rejection_reason ?? null,
+            }
+          : {}),
+      };
+      let query = supabase
+        .from('applications')
+        .update(payload)
+        .eq('candidate_id', id)
+        .eq('job_id', application.job_id);
       if (application.id) {
-        query = supabase.from('applications').update({ stage }).eq('id', application.id);
+        query = supabase.from('applications').update(payload).eq('id', application.id);
       }
       const { error } = await query;
       if (error) throw error;
-      await logActivity('Stage Changed', `Moved stage to ${stage}`);
+      const extraNote =
+        stage === 'Offered' && extras
+          ? ` (offered CTC ${extras.offered_ctc} LPA, joining ${extras.expected_joining_date})`
+          : stage === 'Rejected' && extras?.rejection_reason
+            ? ` (${extras.rejection_reason})`
+            : '';
+      await logActivity('Stage Changed', `Moved stage to ${stage}${extraNote}`);
+      setStagePrompt(null);
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Unable to update stage.');
     } finally {
       setUpdatingJobId(null);
     }
+  }
+
+  function requestStageChange(application: Application, stage: string) {
+    if (stage === 'Offered' || stage === 'Rejected') {
+      setOfferedCtc(application.offered_ctc?.toString() || '');
+      setExpectedJoiningDate(
+        application.expected_joining_date
+          ? String(application.expected_joining_date).slice(0, 10)
+          : ''
+      );
+      setRejectionReason(application.rejection_reason || REJECTION_REASONS[0]);
+      setStagePrompt({ application, stage });
+      return;
+    }
+    void updateStage(application, stage);
+  }
+
+  function confirmStagePrompt() {
+    if (!stagePrompt) return;
+    if (stagePrompt.stage === 'Offered') {
+      if (!offeredCtc || !expectedJoiningDate) {
+        alert('Enter offered CTC and expected joining date.');
+        return;
+      }
+      void updateStage(stagePrompt.application, 'Offered', {
+        offered_ctc: parseFloat(offeredCtc),
+        expected_joining_date: expectedJoiningDate,
+      });
+      return;
+    }
+    void updateStage(stagePrompt.application, 'Rejected', {
+      rejection_reason: rejectionReason,
+    });
   }
 
   async function addNote() {
@@ -271,6 +359,19 @@ export default function CandidateOverviewPage() {
                               ? ` · Max NP ${job.max_notice_period_days}d`
                               : ''}
                           </p>
+                          {(application.offered_ctc != null || application.expected_joining_date) && (
+                            <p className="text-xs text-gray-700 mt-1">
+                              Offered CTC: {application.offered_ctc ?? '—'} LPA · Joining:{' '}
+                              {application.expected_joining_date
+                                ? String(application.expected_joining_date).slice(0, 10)
+                                : '—'}
+                            </p>
+                          )}
+                          {application.rejection_reason && (
+                            <p className="text-xs text-red-700 mt-1">
+                              Rejection reason: {application.rejection_reason}
+                            </p>
+                          )}
                         </div>
                         <label className="text-sm text-gray-700">
                           Stage
@@ -278,7 +379,7 @@ export default function CandidateOverviewPage() {
                             className="ml-2 border rounded-md p-2 text-black"
                             value={application.stage || 'Applied'}
                             disabled={updatingJobId === application.job_id}
-                            onChange={(e) => void updateStage(application, e.target.value)}
+                            onChange={(e) => requestStageChange(application, e.target.value)}
                           >
                             {!PIPELINE_STAGES.includes(
                               (application.stage || 'Applied') as (typeof PIPELINE_STAGES)[number]
@@ -340,6 +441,73 @@ export default function CandidateOverviewPage() {
           </>
         )}
       </div>
+
+      {stagePrompt && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4">
+          <div className="w-full max-w-md space-y-3 rounded-xl bg-white p-5">
+            <h2 className="text-lg font-semibold text-gray-900">
+              {stagePrompt.stage === 'Offered' ? 'Record offer details' : 'Record rejection reason'}
+            </h2>
+            {stagePrompt.stage === 'Offered' ? (
+              <>
+                <label className="block text-sm text-gray-700">
+                  Offered CTC (LPA)
+                  <input
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    value={offeredCtc}
+                    onChange={(e) => setOfferedCtc(e.target.value)}
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                    required
+                  />
+                </label>
+                <label className="block text-sm text-gray-700">
+                  Expected joining date
+                  <input
+                    type="date"
+                    value={expectedJoiningDate}
+                    onChange={(e) => setExpectedJoiningDate(e.target.value)}
+                    className="mt-1 w-full border rounded-md p-2 text-black"
+                    required
+                  />
+                </label>
+              </>
+            ) : (
+              <label className="block text-sm text-gray-700">
+                Rejection reason
+                <select
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  className="mt-1 w-full border rounded-md p-2 text-black"
+                >
+                  {REJECTION_REASONS.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {reason}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setStagePrompt(null)}
+                className="px-3 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmStagePrompt}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+              >
+                Save and move stage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

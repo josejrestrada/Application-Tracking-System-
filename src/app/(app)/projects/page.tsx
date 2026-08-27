@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
+import { useUser } from '@clerk/nextjs';
 
 type Project = {
   id: string;
@@ -24,6 +25,8 @@ type Job = {
   min_ctc?: number | null;
   max_ctc?: number | null;
   location?: string | null;
+  assigned_recruiter_id?: string | null;
+  assigned_recruiter_name?: string | null;
   projects?: { client_name: string; project_name: string } | { client_name: string; project_name: string }[] | null;
 };
 
@@ -40,6 +43,7 @@ function projectLabel(job: Job) {
 }
 
 export default function ProjectsPage() {
+  const { user } = useUser();
   const [projects, setProjects] = useState<Project[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,7 +61,7 @@ export default function ProjectsPage() {
       supabase
         .from('jobs')
         .select(
-          'id, title, project_id, max_notice_period_days, open_positions, status, required_skills, min_experience_years, max_experience_years, min_ctc, max_ctc, location, projects(client_name, project_name)'
+          'id, title, project_id, max_notice_period_days, open_positions, status, required_skills, min_experience_years, max_experience_years, min_ctc, max_ctc, location, assigned_recruiter_id, assigned_recruiter_name, projects(client_name, project_name)'
         )
         .eq('status', 'open')
         .order('title', { ascending: true }),
@@ -107,6 +111,12 @@ export default function ProjectsPage() {
         min_ctc: Number(data.get('min_ctc') || 0),
         max_ctc: Number(data.get('max_ctc') || 0),
         location: String(data.get('location') || '').trim() || null,
+        assigned_recruiter_id: String(data.get('assigned_recruiter_id') || user?.id || '') || null,
+        assigned_recruiter_name:
+          String(data.get('assigned_recruiter_name') || '').trim() ||
+          user?.fullName ||
+          user?.primaryEmailAddress?.emailAddress ||
+          'Recruiter',
         status: 'open',
       },
     ]);
@@ -199,13 +209,14 @@ export default function ProjectsPage() {
                       <th className="px-4 py-3 text-left">Target CTC</th>
                       <th className="px-4 py-3 text-left">Max notice</th>
                       <th className="px-4 py-3 text-left">Openings</th>
+                      <th className="px-4 py-3 text-left">Assigned recruiter</th>
                       <th className="px-4 py-3 text-left">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 text-gray-800">
                     {jobs.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                           No open jobs. Create a job role against a client project.
                         </td>
                       </tr>
@@ -237,6 +248,7 @@ export default function ProjectsPage() {
                           </td>
                           <td className="px-4 py-3">{job.max_notice_period_days ?? '—'} days</td>
                           <td className="px-4 py-3">{job.open_positions ?? 0}</td>
+                          <td className="px-4 py-3">{job.assigned_recruiter_name || 'Unassigned'}</td>
                           <td className="px-4 py-3">
                             <span className="bg-green-50 text-green-800 px-2 py-1 rounded text-xs font-semibold">
                               {job.status}
@@ -405,6 +417,18 @@ export default function ProjectsPage() {
                 className="mt-1 w-full border rounded-md p-2 text-black"
               />
             </label>
+            <label className="block text-sm text-gray-700">
+              Assigned recruiter
+              <input
+                name="assigned_recruiter_name"
+                defaultValue={
+                  user?.fullName || user?.primaryEmailAddress?.emailAddress || ''
+                }
+                required
+                className="mt-1 w-full border rounded-md p-2 text-black"
+              />
+            </label>
+            <input type="hidden" name="assigned_recruiter_id" value={user?.id || ''} />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setJobModal(false)} className="px-3 py-2 text-sm">
                 Cancel
