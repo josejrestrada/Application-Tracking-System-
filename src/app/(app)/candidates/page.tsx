@@ -6,16 +6,25 @@ import { CANDIDATE_JOB_SELECT, supabase } from '@/lib/supabase';
 import { daysUntilRetentionExpiry } from '@/lib/dpdp';
 import Link from 'next/link';
 
-type AssignedJob = {
-  id?: string;
+type ApplicationJob = {
   title?: string;
   max_notice_period_days?: number | null;
 };
 
-function assignedJob(candidate: { jobs?: AssignedJob | AssignedJob[] | null }) {
-  const job = candidate.jobs;
+type Application = {
+  job_id?: string;
+  stage?: string | null;
+  jobs?: ApplicationJob | ApplicationJob[] | null;
+};
+
+function applicationJob(application: Application) {
+  const job = application.jobs;
   if (Array.isArray(job)) return job[0];
   return job ?? undefined;
+}
+
+function candidateApplications(candidate: { applications?: Application[] | null }) {
+  return candidate.applications || [];
 }
 
 function NoticeMatchBadge({
@@ -119,7 +128,7 @@ export default function CandidatesListPage() {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Candidate Directory</h1>
-            <p className="text-sm text-gray-600">All candidates, notice periods, assigned jobs, and recruiter ownership.</p>
+            <p className="text-sm text-gray-600">All candidates, applications by job and stage, notice matching, and recruiter ownership.</p>
           </div>
           <Link
             href="/candidates/new"
@@ -138,7 +147,7 @@ export default function CandidatesListPage() {
                 <tr>
                   <th className="px-4 py-3 text-left">Candidate Name</th>
                   <th className="px-4 py-3 text-left">Contact Info</th>
-                  <th className="px-4 py-3 text-left">Assigned Job</th>
+                  <th className="px-4 py-3 text-left">Applications</th>
                   <th className="px-4 py-3 text-left">Notice Period</th>
                   <th className="px-4 py-3 text-left">Recruiter Owner</th>
                   <th className="px-4 py-3 text-left">DPDP Status / Expiry</th>
@@ -158,13 +167,32 @@ export default function CandidatesListPage() {
                     <tr key={c.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">{c.full_name}</td>
                       <td className="px-4 py-3">{c.email}<br/><span className="text-xs text-gray-500">{c.phone}</span></td>
-                      <td className="px-4 py-3 font-medium text-blue-700">{assignedJob(c)?.title || 'Unassigned'}</td>
                       <td className="px-4 py-3">
-                        <NoticeMatchBadge
-                          noticePeriodDays={c.notice_period_days}
-                          maxNoticePeriodDays={assignedJob(c)?.max_notice_period_days}
-                        />
+                        {candidateApplications(c).length === 0 ? (
+                          <span className="text-gray-500">No applications</span>
+                        ) : (
+                          <ul className="space-y-2">
+                            {candidateApplications(c).map((application, index) => {
+                              const job = applicationJob(application);
+                              return (
+                                <li key={`${c.id}-${application.job_id || index}`}>
+                                  <p className="font-medium text-blue-700">{job?.title || 'Unknown role'}</p>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    <span className="bg-indigo-50 text-indigo-800 px-2 py-0.5 rounded text-xs font-semibold">
+                                      {application.stage || 'Applied'}
+                                    </span>
+                                    <NoticeMatchBadge
+                                      noticePeriodDays={c.notice_period_days}
+                                      maxNoticePeriodDays={job?.max_notice_period_days}
+                                    />
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
                       </td>
+                      <td className="px-4 py-3 text-gray-700">{c.notice_period_days ?? 0} Days</td>
                       <td className="px-4 py-3 text-gray-700">{c.assigned_recruiter_name || 'Unassigned'}</td>
                       <td className="px-4 py-3">
                         <DpdpStatusBadge

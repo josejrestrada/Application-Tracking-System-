@@ -14,6 +14,13 @@ interface Job {
   max_notice_period_days: number;
 }
 
+type ApplicationRow = {
+  job_id: string;
+  stage?: string | null;
+  recruiter_name?: string | null;
+  jobs?: { title?: string; max_notice_period_days?: number | null } | { title?: string; max_notice_period_days?: number | null }[] | null;
+};
+
 type CandidateRecord = {
   id: string;
   full_name: string | null;
@@ -22,12 +29,42 @@ type CandidateRecord = {
   notice_period_days: number | null;
   current_ctc: number | null;
   expected_ctc: number | null;
-  assigned_job_id: string | null;
   assigned_recruiter_name: string | null;
   status: string | null;
   created_at?: string | null;
-  jobs?: { id: string; title: string } | { id: string; title: string }[] | null;
+  applications?: ApplicationRow[] | null;
 };
+
+function jobEmbed(job: ApplicationRow['jobs']) {
+  if (Array.isArray(job)) return job[0];
+  return job ?? undefined;
+}
+
+function applicationJobTitle(row: ApplicationRow) {
+  return jobEmbed(row.jobs)?.title;
+}
+
+async function fetchApplicationsForCandidate(candidateId: string) {
+  const { data, error } = await supabase
+    .from('applications')
+    .select('job_id, stage, recruiter_name, jobs(title)')
+    .eq('candidate_id', candidateId);
+  if (error) throw error;
+  return (data as ApplicationRow[]) || [];
+}
+
+function collidingApplications(existing: ApplicationRow[], selectedJobIds: string[]) {
+  const selected = new Set(selectedJobIds);
+  return existing.filter((row) => selected.has(row.job_id));
+}
+
+function collisionMessage(candidate: CandidateRecord, collisions: ApplicationRow[]) {
+  const names = collisions
+    .map((row) => applicationJobTitle(row) || row.job_id)
+    .join(', ');
+  const recruiter = collisions[0]?.recruiter_name || candidate.assigned_recruiter_name || 'System';
+  return `COLLISION PREVENTED: "${candidate.full_name}" has already applied to ${names} (recruiter: ${recruiter}). Deselect those jobs to continue.`;
+}
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
@@ -41,18 +78,6 @@ function phonesMatch(stored: string | null | undefined, input: string) {
   const a = digitsPhone(stored || '');
   const b = digitsPhone(input);
   return a.length >= 10 && a === b;
-}
-
-function jobTitleFromCandidate(candidate: CandidateRecord) {
-  const jobs = candidate.jobs;
-  if (Array.isArray(jobs)) return jobs[0]?.title;
-  return jobs?.title;
-}
-
-function collisionMessage(candidate: CandidateRecord, jobTitle?: string) {
-  const title = jobTitle || jobTitleFromCandidate(candidate) || 'this position';
-  const recruiter = candidate.assigned_recruiter_name || 'System';
-  return `COLLISION PREVENTED: Candidate "${candidate.full_name}" is ALREADY assigned to "${title}" by recruiter "${recruiter}". Select a different position.`;
 }
 
 async function findExistingByEmailOrPhone(email: string, phone: string) {
@@ -132,8 +157,9 @@ export default function NewCandidatePage() {
     expected_ctc: '',
     source_type: 'Naukri',
     agency_fee_pct: '8.33',
-    assigned_job_id: '',
   });
+  const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
+  const [existingApplications, setExistingApplications] = useState<ApplicationRow[]>([]);
 
   const [existingCandidate, setExistingCandidate] = useState<CandidateRecord | null>(null);
   const [checking, setChecking] = useState(false);
@@ -153,10 +179,14 @@ export default function NewCandidatePage() {
     fetchJobs();
   }, []);
 
-  const applyCollision = (candidate: CandidateRecord | null, jobId: string) => {
-    if (candidate && jobId && candidate.assigned_job_id === jobId) {
-      const jobTitle = availableJobs.find((j) => j.id === jobId)?.title;
-      setJobConflict(collisionMessage(candidate, jobTitle));
+  const applyCollision = (candidate: CandidateRecord | null, applications: ApplicationRow[], jobIds: string[]) => {
+    if (!candidate || jobIds.length === 0) {
+      setJobConflict(null);
+      return false;
+    }
+    const collisions = collidingApplications(applications, jobIds);
+    if (collisions.length > 0) {
+      setJobConflict(collisionMessage(candidate, collisions));
       return true;
     }
     setJobConflict(null);
@@ -171,12 +201,15 @@ export default function NewCandidatePage() {
       const { match, conflict } = await findExistingByEmailOrPhone(nextEmail, nextPhone);
       if (conflict) {
         setExistingCandidate(null);
+        setExistingApplications([]);
         setJobConflict(conflict);
         return;
       }
 
       setExistingCandidate(match);
       if (match) {
+        const applications = await fetchApplicationsForCandidate(match.id);
+        setExistingApplications(applications);
         setFormData((prev) => ({
           ...prev,
           full_name: match.full_name || prev.full_name,
@@ -184,8 +217,9 @@ export default function NewCandidatePage() {
           current_ctc: match.current_ctc?.toString() || prev.current_ctc,
           expected_ctc: match.expected_ctc?.toString() || prev.expected_ctc,
         }));
-        applyCollision(match, formData.assigned_job_id);
+        applyCollision(match, applications, selectedJobIds);
       } else {
+        setExistingApplications([]);
         setJobConflict(null);
       }
     } catch (err) {
@@ -196,14 +230,21 @@ export default function NewCandidatePage() {
     }
   };
 
-  const handleJobSelect = (jobId: string) => {
-    setFormData((prev) => ({ ...prev, assigned_job_id: jobId }));
-    applyCollision(existingCandidate, jobId);
+  const toggleJob = (jobId: string) => {
+    const next = selectedJobIds.includes(jobId)
+      ? selectedJobIds.filter((id) => id !== jobId)
+      : [...selectedJobIds, jobId];
+    setSelectedJobIds(next);
+    applyCollision(existingCandidate, existingApplications, next);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (jobConflict) return;
+    if (selectedJobIds.length === 0) {
+      setJobConflict('Select at least one open job to create an application.');
+      return;
+    }
     setSubmitting(true);
 
     try {
@@ -214,13 +255,19 @@ export default function NewCandidatePage() {
         return;
       }
 
-      if (match && formData.assigned_job_id && match.assigned_job_id === formData.assigned_job_id) {
-        applyCollision(match, formData.assigned_job_id);
-        setExistingCandidate(match);
-        setSubmitting(false);
-        return;
+      let applications: ApplicationRow[] = [];
+      if (match) {
+        applications = await fetchApplicationsForCandidate(match.id);
+        setExistingApplications(applications);
+        if (applyCollision(match, applications, selectedJobIds)) {
+          setExistingCandidate(match);
+          setSubmitting(false);
+          return;
+        }
       }
 
+      const recruiterName =
+        user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter';
       const profile = {
         full_name: formData.full_name,
         email: normalizeEmail(formData.email),
@@ -230,34 +277,56 @@ export default function NewCandidatePage() {
         expected_ctc: parseFloat(formData.expected_ctc) || 0,
         source_type: formData.source_type,
         agency_fee_pct: parseFloat(formData.agency_fee_pct) || 8.33,
-        assigned_job_id: formData.assigned_job_id || null,
         assigned_recruiter_id: user?.id,
-        assigned_recruiter_name:
-          user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Recruiter',
+        assigned_recruiter_name: recruiterName,
         dpdp_consent_given: true,
         dpdp_consent_timestamp: new Date().toISOString(),
         retention_expiry_date: retentionExpiryFromCreatedAt(match?.created_at),
       };
 
-      let error;
+      let candidateId = match?.id;
 
       if (match) {
         const { error: updateError } = await supabase
           .from('candidates')
           .update(profile)
           .eq('id', match.id);
-        error = updateError;
+        if (updateError) {
+          alert('Error saving candidate: ' + updateError.message);
+          setSubmitting(false);
+          return;
+        }
       } else {
-        const { error: insertError } = await supabase.from('candidates').insert([
-          { ...profile, status: 'Sourced' },
-        ]);
-        error = insertError;
+        const { data: inserted, error: insertError } = await supabase
+          .from('candidates')
+          .insert([{ ...profile, status: 'Sourced' }])
+          .select('id')
+          .single();
+        if (insertError || !inserted) {
+          alert('Error saving candidate: ' + (insertError?.message || 'Missing candidate id.'));
+          setSubmitting(false);
+          return;
+        }
+        candidateId = inserted.id;
       }
 
-      if (error) {
-        alert('Error saving candidate: ' + error.message);
-        setSubmitting(false);
-        return;
+      const alreadyApplied = new Set(applications.map((row) => row.job_id));
+      const newJobIds = selectedJobIds.filter((id) => !alreadyApplied.has(id));
+      if (newJobIds.length > 0 && candidateId) {
+        const { error: appError } = await supabase.from('applications').insert(
+          newJobIds.map((jobId) => ({
+            candidate_id: candidateId,
+            job_id: jobId,
+            recruiter_id: user?.id,
+            recruiter_name: recruiterName,
+            stage: 'Applied',
+          }))
+        );
+        if (appError) {
+          alert('Candidate saved, but applications failed: ' + appError.message);
+          setSubmitting(false);
+          return;
+        }
       }
 
       router.push('/candidates');
@@ -286,7 +355,12 @@ export default function NewCandidatePage() {
               </h3>
             </div>
             <p className="text-xs text-amber-800 mt-1">
-              Currently assigned job: <span className="font-bold">{jobTitleFromCandidate(existingCandidate) || 'Unassigned / Open Pool'}</span> 
+              Existing applications:{' '}
+              <span className="font-bold">
+                {existingApplications.length > 0
+                  ? existingApplications.map((row) => applicationJobTitle(row) || row.job_id).join(', ')
+                  : 'None yet'}
+              </span>
               {' '}(Assigned Recruiter: {existingCandidate.assigned_recruiter_name || 'Unassigned'})
             </p>
           </div>
@@ -342,19 +416,33 @@ export default function NewCandidatePage() {
           </div>
 
           <div className="border-t pt-4">
-            <label className="block text-sm font-bold text-blue-900">Assign to Active Job Position</label>
-            <select
-              className="mt-1 block w-full border rounded-md p-2 text-black bg-blue-50/30"
-              value={formData.assigned_job_id}
-              onChange={(e) => handleJobSelect(e.target.value)}
-            >
-              <option value="">-- Select Open Job (Optional) --</option>
-              {availableJobs.map((job) => (
-                <option key={job.id} value={job.id}>
-                  {job.title} (Max Notice: {job.max_notice_period_days} Days)
-                </option>
-              ))}
-            </select>
+            <p className="block text-sm font-bold text-blue-900">Apply to open job positions</p>
+            <p className="text-xs text-gray-500 mt-1 mb-2">Select one or more roles. Duplicate applications to the same job are blocked.</p>
+            <div className="space-y-2 rounded-md border border-blue-100 bg-blue-50/30 p-3 max-h-56 overflow-y-auto">
+              {availableJobs.length === 0 ? (
+                <p className="text-sm text-gray-500">No open jobs. Create a role under Projects & Jobs first.</p>
+              ) : (
+                availableJobs.map((job) => {
+                  const alreadyApplied = existingApplications.some((row) => row.job_id === job.id);
+                  return (
+                    <label key={job.id} className="flex items-start gap-2 text-sm text-gray-800">
+                      <input
+                        type="checkbox"
+                        checked={selectedJobIds.includes(job.id)}
+                        onChange={() => toggleJob(job.id)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        {job.title} (Max Notice: {job.max_notice_period_days} Days)
+                        {alreadyApplied && (
+                          <span className="ml-2 text-xs font-semibold text-red-700">Already applied</span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-4 border-t pt-4">
@@ -443,7 +531,7 @@ export default function NewCandidatePage() {
               jobConflict ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {submitting ? 'Processing...' : existingCandidate ? 'Re-assign Candidate' : 'Add Candidate'}
+            {submitting ? 'Processing...' : existingCandidate ? 'Add applications' : 'Add Candidate'}
           </button>
         </form>
       </div>

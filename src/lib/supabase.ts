@@ -5,6 +5,6 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-/** Embed the assigned requisition via assigned_job_id (not an inferred jobs(*) join). */
+/** Candidate row plus per-job applications (job title, stage, notice cap). */
 export const CANDIDATE_JOB_SELECT =
-  '*, jobs:assigned_job_id(id, title, max_notice_period_days)';
+  '*, applications(job_id, stage, recruiter_name, jobs(title, max_notice_period_days))';
